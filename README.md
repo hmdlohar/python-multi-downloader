@@ -20,7 +20,7 @@ hget https://example.com/model.safetensors:/content/models/vae
 ### Library
 
 ```python
-`!pip install --upgrade git+https://github.com/hmdlohar/python-multi-downloader.git`
+!pip install --upgrade git+https://github.com/hmdlohar/python-multi-downloader.git
 import hget
 
 hget.download([
