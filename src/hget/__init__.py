@@ -34,12 +34,22 @@ def download(
 
     for item in items:
         if isinstance(item, str):
-            # Check for url:dir format
-            if ":" in item and not item.startswith(("http://", "https://", "ftp://")):
-                # This logic is a bit tricky since URL contains ':', 
-                # but usually at the beginning (https://)
-                # Let's split from the right if it looks like a path override
-                pass
+            # Check for url:dir format. 
+            # We look for the last ':' that isn't part of the protocol (http://)
+            if ":" in item:
+                # heuristic: if '://' is present, look for ':' after that
+                protocol_idx = item.find("://")
+                search_start = protocol_idx + 3 if protocol_idx != -1 else 0
+                mapping_idx = item.find(":", search_start)
+                
+                if mapping_idx != -1:
+                    url = item[:mapping_idx]
+                    dest_dir = item[mapping_idx+1:]
+                    normalized_items.append({
+                        "url": url,
+                        "dir": resolve_path(dest_dir, global_dest)
+                    })
+                    continue
             
             normalized_items.append({
                 "url": item,
@@ -48,14 +58,23 @@ def download(
         elif isinstance(item, (list, tuple)):
             normalized_items.append({
                 "url": item[0],
-                "dir": item[1] if len(item) > 1 else global_dest
+                "dir": resolve_path(item[1], global_dest) if len(item) > 1 else global_dest
             })
         elif isinstance(item, dict):
             normalized_items.append({
                 "url": item["url"],
-                "dir": item.get("dir") or item.get("dest") or global_dest,
+                "dir": resolve_path(item.get("dir") or item.get("dest") or global_dest, global_dest),
                 "out": item.get("out")
             })
+
+    # Fix for Jupyter/Colab where event loop is already running
+    try:
+        loop = asyncio.get_running_loop()
+        if loop.is_running():
+            import nest_asyncio
+            nest_asyncio.apply()
+    except RuntimeError:
+        pass
 
     asyncio.run(run_download(normalized_items, use_aria2=use_aria2, max_concurrency=max_concurrency))
 

@@ -28,3 +28,5 @@ hget.download([
     {"url": "https://example.com/file3.zip", "dir": "./another_dir"}
 ])
 ```
+
+> **Note for Colab/Jupyter**: `hget` automatically handles the "running event loop" issue using `nest-asyncio`, so it works out of the box in notebooks.
