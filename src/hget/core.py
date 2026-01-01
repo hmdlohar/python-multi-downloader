@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import List, Dict, Union, Optional
 
 import httpx
-from tqdm.rich import tqdm
 from rich.console import Console
 
 from .utils import resolve_path, ensure_dir, has_aria2
@@ -57,49 +56,73 @@ class Aria2Downloader(Downloader):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
+from rich.progress import (
+    Progress,
+    TextColumn,
+    BarColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
+)
+
 class NativeDownloader(Downloader):
-    async def download_file(self, client: httpx.AsyncClient, url: str, dest_dir: Path, filename: Optional[str] = None, semaphore: asyncio.Semaphore = None):
-        if semaphore:
-            async with semaphore:
-                return await self._download(client, url, dest_dir, filename)
-        else:
-            return await self._download(client, url, dest_dir, filename)
-
-    async def _download(self, client: httpx.AsyncClient, url: str, dest_dir: Path, filename: Optional[str] = None):
-        ensure_dir(dest_dir)
+    async def download_file(
+        self, 
+        client: httpx.AsyncClient, 
+        item: Dict[str, str], 
+        progress: Progress, 
+        semaphore: asyncio.Semaphore
+    ):
+        url = item['url']
+        dest_dir = Path(item['dir'])
+        filename = item.get('out')
         
-        try:
-            async with client.stream("GET", url, follow_redirects=True) as response:
-                if response.status_code != 200:
-                    console.print(f"[red]Failed to download {url}: {response.status_code}[/red]")
-                    return
+        async with semaphore:
+            ensure_dir(dest_dir)
+            try:
+                async with client.stream("GET", url, follow_redirects=True) as response:
+                    if response.status_code != 200:
+                        console.print(f"[red]Failed to download {url}: {response.status_code}[/red]")
+                        return
 
-                if not filename:
-                    # Try to get filename from Content-Disposition or URL
-                    filename = response.headers.get("Content-Disposition", "").split("filename=")[-1].strip('"')
                     if not filename:
-                        filename = url.split("/")[-1].split("?")[0]
-                
-                dest_path = dest_dir / filename
-                total = int(response.headers.get("Content-Length", 0))
+                        filename = response.headers.get("Content-Disposition", "").split("filename=")[-1].strip('"')
+                        if not filename:
+                            filename = url.split("/")[-1].split("?")[0]
+                    
+                    dest_path = dest_dir / filename
+                    total = int(response.headers.get("Content-Length", 0))
 
-                with open(dest_path, "wb") as f:
-                    with tqdm(total=total, unit='B', unit_scale=True, desc=filename, leave=False) as progress:
+                    task_id = progress.add_task(description=filename, total=total)
+                    
+                    with open(dest_path, "wb") as f:
                         async for chunk in response.aiter_bytes():
                             f.write(chunk)
-                            progress.update(len(chunk))
-        except Exception as e:
-            console.print(f"[red]Error downloading {url}: {e}[/red]")
+                            progress.update(task_id, advance=len(chunk))
+            except Exception as e:
+                console.print(f"[red]Error downloading {url}: {e}[/red]")
 
     async def download_all(self, items: List[Dict[str, str]], max_concurrency: int = 4):
         semaphore = asyncio.Semaphore(max_concurrency)
+        
+        progress = Progress(
+            TextColumn("[bold blue]{task.description}", justify="right"),
+            BarColumn(bar_width=None),
+            "[progress.percentage]{task.percentage:>3.1f}%",
+            "•",
+            DownloadColumn(),
+            "•",
+            TransferSpeedColumn(),
+            "•",
+            TimeRemainingColumn(),
+        )
+
         async with httpx.AsyncClient(timeout=None) as client:
-            tasks = []
-            for item in items:
-                dest_dir = Path(item['dir'])
-                tasks.append(self.download_file(client, item['url'], dest_dir, item.get('out'), semaphore))
-            
-            await asyncio.gather(*tasks)
+            with progress:
+                tasks = []
+                for item in items:
+                    tasks.append(self.download_file(client, item, progress, semaphore))
+                await asyncio.gather(*tasks)
 
 async def run_download(items: List[Dict[str, str]], use_aria2: bool = True, max_concurrency: Optional[int] = None):
     if use_aria2 and has_aria2():
