@@ -68,14 +68,15 @@ def download(
             })
 
     # Fix for Jupyter/Colab where event loop is already running
+    coro = run_download(normalized_items, use_aria2=use_aria2, max_concurrency=max_concurrency)
     try:
         loop = asyncio.get_running_loop()
         if loop.is_running():
             import nest_asyncio
             nest_asyncio.apply()
+            loop.run_until_complete(coro)
     except RuntimeError:
-        pass
-
-    asyncio.run(run_download(normalized_items, use_aria2=use_aria2, max_concurrency=max_concurrency))
+        # No loop running, safe to use asyncio.run
+        asyncio.run(coro)
 
 __all__ = ["download"]
